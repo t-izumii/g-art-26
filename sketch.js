@@ -27,7 +27,7 @@ function setup() {
   createCanvasSetup();
   console.log("Setup完了 - active:", active);
   console.log("currentSize:", currentSize);
-  applyPerCubeOverrides(); // URLの ?size= で決まる currentSize に応じて値を上書き
+  applyPerCubeOverrides();
   createGraphicsLayers();
   console.log("GraphicsLayers作成完了 - 数:", graphicsLayers.length);
 
@@ -55,11 +55,8 @@ function draw() {
   background(0, 20);
   drawDebugMode(); // デバッグ用LEDキューブのレイアウト参考画像の描画
 
-  // 時間経過で scale を線形に大きくする（実時間で毎秒 +0.01、上限0.6）
-  // deltaTime=前フレームからの経過ms。毎フレーム少しずつ足して滑らかに変化させる
   if (nagareShared.scale < 0.6) {
     nagareShared.scale = Math.min(0.6, nagareShared.scale + 0.01 * (deltaTime / 1000));
-    // GUIのスライダー / 表示も同期
     const inp = document.getElementById("n-scale");
     if (inp) inp.value = nagareShared.scale;
     const lab = document.getElementById("n-scale-val");
@@ -148,61 +145,43 @@ function draw() {
   }
 }
 
-// ════════════════════════════════════════════════════════════════════════
-//  ながれ — Nagare （nagare_1.html からテンプレートへ移植）
-//  ふくらんだ玉と尾を引く塊が一本の軸に沿って群れ、ゆっくり攪拌される。
-//  クリーム地に太い輪郭とフラットな極彩色。各 GraphicsLayer（LEDキューブの
-//  各面のオフスクリーンバッファ）が、それぞれ独立した「ながれ」を描く。
-//  サイズ・座標は 760px 幅基準で調整されているため、正方形バッファに合わせて
-//  一律スケール（NAGARE_REF_W 基準）して歪みなく収める。
-// ════════════════════════════════════════════════════════════════════════
-const NAGARE_REF_W = 760; // 元のサイズ調整の基準幅（これに対してバッファをスケール）
-const NAGARE_BASE_SEED = 7; // 基準シード（レイヤーごとにずらす）
+
+const NAGARE_REF_W = 760;
+const NAGARE_BASE_SEED = 7;
 const NAGARE_CREAM = [245, 241, 230];
 const NAGARE_OUTLINE = [58, 52, 44];
 
-// ── 全タイル共通のパラメータ（仮UIから操作する） ──
 const NAGARE_DEFAULTS = {
-  axis: -4, // 流れの傾き（上向き基準, deg）
-  loopSec: 40, // 1周の長さ（秒）
-  spread: 1.2, // 流れの幅（川幅）
-  scale: 0.17, // 塊の大きさ
-  variation: 0.5, // 大小のばらつき幅
-  introSec: 2.5, // 0から現れるまでの時間（秒）
-  fadeIn: 0.13, // 下：出現の余白（流れの何割で0→フルになるか）
-  fadeOut: 0.18, // 上：消失の余白（流れの何割で フル→0 になるか）
-  density: 1, // 760×1180 相当での塊の数。面積比でタイルごとに換算
-  // 0->空(3)のミラー, 1若葉, 2陽だまり, 3空, 4朝顔, 5建物(白), 6生成り, 7若苗, 8ロゴ
+  axis: -4,
+  loopSec: 40,
+  spread: 1.2,
+  scale: 0.17,
+  variation: 0.5,
+  introSec: 2.5,
+  fadeIn: 0.13,
+  fadeOut: 0.18,
+  density: 1,
   palette: ["#5fc6e8", "#5bbf6a", "#ffd24c", "#5fc6e8", "#b89cf0", "#ffffff", "#fbf3df", "#8fe3b0", "#d44447"],
-  // 8色（palette index 1..8）の出やすさ
   weights: [2, 2, 2.5, 0.5, 2.5, 1, 2, 1],
 };
-// 現在値（全レイヤーが共有して参照）
 let nagareShared = JSON.parse(JSON.stringify(NAGARE_DEFAULTS));
 
-// ── CUBEごとの上書き設定（URLの ?size= で決まる currentSize で判定） ──
-//   本番は size パラメータでCUBEが1つに確定するので、1ファイルのまま面別に値を変えられる。
-//   キーは CANVAS_SIZES と同じ（LED_CUBE1/2/3）。指定しない項目は NAGARE_DEFAULTS のまま。
-//   フルスクリーン(size未指定)は既定値を使用。
 const NAGARE_PER_CUBE = {
   LED_CUBE1: { density: 720 },
   LED_CUBE2: { density: 1300 },
   LED_CUBE3: { density: 3000 },
 };
-// currentSize を見て nagareShared に上書きを適用（起動時に1回）
 function applyPerCubeOverrides() {
   const o = NAGARE_PER_CUBE[currentSize];
   if (o) Object.assign(nagareShared, o);
 }
 
-// ── 純粋ヘルパー（状態を持たない） ──
 function nagAngTo(from, to) {
   let d = to - from;
   while (d > Math.PI) d -= TWO_PI;
   while (d < -Math.PI) d += TWO_PI;
   return d;
 }
-// 少しオーバーシュートするポップイン
 function nagEaseOutBack(t) {
   if (t <= 0) return 0;
   const c1 = 1.70158,
@@ -214,20 +193,15 @@ function nagSmoothstep(t) {
   return t * t * (3 - 2 * t);
 }
 
-// 個別Graphics管理クラス（各面に「ながれ」を描画）
 class GraphicsLayer {
   constructor(size, index, shape) {
-    //クラスの変更しないほうがいいプロパティ
     this.graphics = createGraphics(size, size);
     this.index = index;
     this.shape = shape;
     this.isActive = false;
 
-    // ── nagare のパラメータ（全タイル共通の nagareShared を参照） ──
     this.params = nagareShared;
-    // 760px 基準のサイズ調整を正方形バッファへ一律スケール
     this.sizeScale = size / NAGARE_REF_W;
-    // 塊の数は面積比で換算（密度を一定に保つ）
     this.shapes = Math.max(
       60,
       Math.round((nagareShared.density * size * size) / (760 * 1180))
@@ -236,11 +210,10 @@ class GraphicsLayer {
     this.effScale = 1;
     this.items = [];
     this.dots = [];
-    this.introStart = frameCount; // 生成時から intro を再生
+    this.introStart = frameCount;
     this.buildScene();
   }
 
-  // ── パレット / 重み付き抽選 ──
   paletteColor(idx) {
     if (idx === 0) idx = 3;
     return color(this.params.palette[idx]);
@@ -252,13 +225,12 @@ class GraphicsLayer {
     if (total <= 0) return 1;
     let r = random(total);
     for (let i = 0; i < w.length; i++) {
-      if (r < w[i]) return i + 1; // palette index 1..8
+      if (r < w[i]) return i + 1;
       r -= w[i];
     }
     return 1;
   }
 
-  // ── 固定構図を組み立てる（レイヤーごとに seed をずらす） ──
   buildScene() {
     randomSeed(NAGARE_BASE_SEED + this.index * 101);
     noiseSeed(NAGARE_BASE_SEED + this.index * 101);
@@ -268,13 +240,13 @@ class GraphicsLayer {
       const isOrb = random() < 0.4;
       let colIdx = this.weightedIndex();
       const stream = {
-        p0: random(), // 流れに沿った位置
-        laneN: random(-1, 1), // 川幅方向のレーン(-1..1)
+        p0: random(),
+        laneN: random(-1, 1),
         swayPh: random(TWO_PI),
         swayAmp: random(8, 30),
         orbPh: random(TWO_PI),
         ph: random(1000),
-        sz: random(-1, 1), // 正規化サイズ係数（Variationで増幅）
+        sz: random(-1, 1),
         colIdx,
       };
 
@@ -282,14 +254,14 @@ class GraphicsLayer {
         this.items.push(Object.assign(stream, { orb: true, rC: 57, aspect: random(0.82, 1.18) }));
       } else {
         const leaf = random() < 0.18;
-        if (leaf) stream.colIdx = random() < 0.5 ? 1 : 7; // 緑系（若葉 / 若苗）
+        if (leaf) stream.colIdx = random() < 0.5 ? 1 : 7;
         const profile = leaf ? 1 : [0, 0, 1, 2][Math.floor(random(4))];
         this.items.push(
           Object.assign(stream, {
             orb: false,
             leaf: leaf,
             angOff: random(-0.4, 0.4),
-            lenC: leaf ? 105 : 142, // サイズ中心値（Variationで広がる）
+            lenC: leaf ? 105 : 142,
             widC: leaf ? 62 : 65,
             curlF: random(-0.42, 0.42),
             profile: profile,
@@ -298,12 +270,11 @@ class GraphicsLayer {
       }
     }
 
-    // 上に乗る粒（種）。同じ流れに乗る
     this.dots = [];
-    const dn = 0; // 粒を一旦OFF（戻すときは Math.floor(this.shapes * 0.18) に）
+    const dn = 0;
     for (let i = 0; i < dn; i++) {
       this.dots.push({
-        rC: 20, // 粒の基準サイズ（点に見えないよう拡大。玉=57）
+        rC: 20,
         sz: random(-1, 1),
         p0: random(),
         laneN: random(-1, 1),
@@ -318,8 +289,6 @@ class GraphicsLayer {
     return Math.max(0.1, 1 + this.params.variation * s.sz);
   }
 
-  // 流れに沿ったサイズ包絡：下端で誕生(0)→中央で最大→上端で0
-  //   fadeIn=下の余白, fadeOut=上の余白（GUIで可変）
   scaleEnv(p) {
     const fin = Math.max(0.001, this.params.fadeIn);
     const fout = Math.max(0.001, this.params.fadeOut);
@@ -328,9 +297,8 @@ class GraphicsLayer {
     return 1;
   }
 
-  // ── リボン（玉＋尾）の輪郭をフレームごとに評価 ──
   ribbonOutline(s, theta, baseX, baseY, sf) {
-    const a = radians(-90 + this.params.axis) + s.angOff; // 流れの上向き(+傾き)
+    const a = radians(-90 + this.params.axis) + s.angOff;
     const dir = { x: Math.cos(a), y: Math.sin(a) };
     const perp = { x: -Math.sin(a), y: Math.cos(a) };
     const bx = baseX,
@@ -338,7 +306,7 @@ class GraphicsLayer {
     const L = s.lenC * this.sizeFactor(s) * this.effScale * sf;
     const maxW = s.widC * this.sizeFactor(s) * this.effScale * sf;
     const ph = s.orbPh;
-    const curl = s.curlF * (0.18 + 0.18 * Math.sin(theta + ph)); // ゆるい弓なり
+    const curl = s.curlF * (0.18 + 0.18 * Math.sin(theta + ph));
     const swayAmp = maxW * 0.16;
     const N = 22;
 
@@ -347,25 +315,22 @@ class GraphicsLayer {
       const u = j / N;
       let px = bx + dir.x * (u * L) + perp.x * (curl * L * Math.sin(u * Math.PI));
       let py = by + dir.y * (u * L) + perp.y * (curl * L * Math.sin(u * Math.PI));
-      // 中央のゆらぎ（両端0）→折れない
       const wob = Math.sin(theta + ph + u * Math.PI * 0.7) * Math.sin(u * Math.PI) * swayAmp;
       px += perp.x * wob;
       py += perp.y * wob;
       pts.push({ x: px, y: py });
     }
 
-    // 幅プロファイル（頭は u=0）
     const w = [];
     for (let j = 0; j <= N; j++) {
       const u = j / N;
       let ww;
-      if (s.profile === 0) ww = maxW * Math.pow(Math.max(0, 1 - u), 0.48); // ふっくらした勾玉
-      else if (s.profile === 1) ww = maxW * Math.pow(Math.sin(u * Math.PI), 0.7); // 葉/レンズ
-      else ww = maxW * (0.5 + 0.5 * Math.cos(u * Math.PI)); // 棍棒
+      if (s.profile === 0) ww = maxW * Math.pow(Math.max(0, 1 - u), 0.48);
+      else if (s.profile === 1) ww = maxW * Math.pow(Math.sin(u * Math.PI), 0.7);
+      else ww = maxW * (0.5 + 0.5 * Math.cos(u * Math.PI));
       w.push(ww + 4.0);
     }
 
-    // 法線
     const nor = [];
     for (let j = 0; j <= N; j++) {
       let ax, ay;
@@ -391,9 +356,8 @@ class GraphicsLayer {
     }
 
     const out = [];
-    for (let j = 0; j <= N; j++) out.push(left[j]); // 頭→尾（左）
+    for (let j = 0; j <= N; j++) out.push(left[j]);
 
-    // 尾の丸キャップ
     {
       const ct = pts[N],
         rt = w[N] / 2;
@@ -413,9 +377,8 @@ class GraphicsLayer {
       }
     }
 
-    for (let j = N; j >= 0; j--) out.push(right[j]); // 尾→頭（右）
+    for (let j = N; j >= 0; j--) out.push(right[j]);
 
-    // 頭の丸い玉キャップ（index 0）
     const c = pts[0],
       r = w[0] / 2;
     if (r > 1.5) {
@@ -435,10 +398,8 @@ class GraphicsLayer {
     return { out, pts };
   }
 
-  // このレイヤーの計算処理（幾何はdraw内でフレーム毎に評価）
   update() {}
 
-  // このレイヤーの描画処理
   draw() {
     const g = this.graphics;
     const W = g.width,
@@ -447,28 +408,27 @@ class GraphicsLayer {
 
     g.background(NAGARE_CREAM[0], NAGARE_CREAM[1], NAGARE_CREAM[2]);
     const loopFrames = Math.max(1, Math.round(p.loopSec * 60));
-    const loopPhase = (frameCount % loopFrames) / loopFrames; // 0..1
+    const loopPhase = (frameCount % loopFrames) / loopFrames;
     const theta = TWO_PI * loopPhase;
-    this.effScale = p.scale * this.sizeScale * (1 + 0.03 * Math.sin(theta * 2)); // ゆるい呼吸
+    this.effScale = p.scale * this.sizeScale * (1 + 0.03 * Math.sin(theta * 2));
     g.strokeJoin(ROUND);
     g.strokeCap(ROUND);
 
     const introFrames = Math.max(1, Math.round(p.introSec * 60));
     const introScale = p.introSec <= 0 ? 1 : nagEaseOutBack(Math.min(1, (frameCount - this.introStart) / introFrames));
 
-    // 上方向の流れ（axisで傾く）
     const fa = radians(-90 + p.axis);
     const dir = { x: Math.cos(fa), y: Math.sin(fa) };
     const perp = { x: -Math.sin(fa), y: Math.cos(fa) };
     const cx = W * 0.5,
       cy = H * 0.5;
-    const span = H * 0.86; // 移動帯（枠内に収める）
-    const bandHalf = W * 0.5 * p.spread; // 川幅
+    const span = H * 0.86;
+    const bandHalf = W * 0.5 * p.spread;
 
     for (let i = 0; i < this.items.length; i++) {
       const s = this.items[i];
       const pp = (s.p0 + loopPhase) % 1;
-      const sf = this.scaleEnv(pp) * introScale; // サイズ係数（0=未誕生）
+      const sf = this.scaleEnv(pp) * introScale;
       if (sf <= 0.01) continue;
 
       const along = (pp - 0.5) * span;
@@ -503,7 +463,6 @@ class GraphicsLayer {
       }
     }
 
-    // 同じ流れに乗る粒（種）
     for (let i = 0; i < this.dots.length; i++) {
       const d = this.dots[i];
       const pp = (d.p0 + loopPhase) % 1;
@@ -584,9 +543,6 @@ function removeGraphicsLayers() {
   currentLayerIndex = 0;
 }
 
-// ════════════════════════════════════════════════════════════════════════
-//  仮UI: 全タイルへ nagare パラメータを反映（NEORTアップロード時はパネルごと削除可）
-// ════════════════════════════════════════════════════════════════════════
 function nagareFormatVal(name, v) {
   if (name === "axis") return v + "°";
   if (name === "loopSec" || name === "introSec") return v + "s";
@@ -595,25 +551,13 @@ function nagareFormatVal(name, v) {
   return v;
 }
 
-// スライダー共通ハンドラ
 function nagareUpdateParam(name, value) {
-  const isInt = name === "axis" || name === "loopSec" || name === "density";
+  const isInt = name === "axis" || name === "loopSec";
   nagareShared[name] = isInt ? parseInt(value) : parseFloat(value);
   const el = document.getElementById("n-" + name + "-val");
   if (el) el.textContent = nagareFormatVal(name, nagareShared[name]);
-
-  if (name === "density") {
-    // 各タイルの塊数を再計算してシーンを作り直す
-    for (const layer of graphicsLayers) {
-      const s = layer.graphics.width;
-      layer.shapes = Math.max(60, Math.round((nagareShared.density * s * s) / (760 * 1180)));
-      layer.buildScene();
-    }
-    nagareReplayIntro();
-  }
 }
 
-// 色（palette index 1..8 を UI の 0..7 で操作）
 function nagareUpdateColor(idx, value) {
   nagareShared.palette[idx + 1] = value;
   const el = document.getElementById("n-color" + idx + "-val");
@@ -629,7 +573,6 @@ function nagareRegenerate() {
   nagareReplayIntro();
 }
 
-// パネルの開閉
 function nagareTogglePanel() {
   const p = document.getElementById("nagare-panel");
   if (p) p.classList.toggle("collapsed");
