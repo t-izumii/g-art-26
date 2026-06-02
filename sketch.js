@@ -27,6 +27,7 @@ function setup() {
   createCanvasSetup();
   console.log("Setup完了 - active:", active);
   console.log("currentSize:", currentSize);
+  applyPerCubeOverrides(); // URLの ?size= で決まる currentSize に応じて値を上書き
   createGraphicsLayers();
   console.log("GraphicsLayers作成完了 - 数:", graphicsLayers.length);
 
@@ -170,7 +171,7 @@ const NAGARE_DEFAULTS = {
   introSec: 2.5, // 0から現れるまでの時間（秒）
   fadeIn: 0.13, // 下：出現の余白（流れの何割で0→フルになるか）
   fadeOut: 0.18, // 上：消失の余白（流れの何割で フル→0 になるか）
-  density: 720, // 760×1180 相当での塊の数。面積比でタイルごとに換算
+  density: 1, // 760×1180 相当での塊の数。面積比でタイルごとに換算
   // 0->空(3)のミラー, 1若葉, 2陽だまり, 3空, 4朝顔, 5建物(白), 6生成り, 7若苗, 8ロゴ
   palette: ["#5fc6e8", "#5bbf6a", "#ffd24c", "#5fc6e8", "#b89cf0", "#ffffff", "#fbf3df", "#8fe3b0", "#d44447"],
   // 8色（palette index 1..8）の出やすさ
@@ -178,6 +179,21 @@ const NAGARE_DEFAULTS = {
 };
 // 現在値（全レイヤーが共有して参照）
 let nagareShared = JSON.parse(JSON.stringify(NAGARE_DEFAULTS));
+
+// ── CUBEごとの上書き設定（URLの ?size= で決まる currentSize で判定） ──
+//   本番は size パラメータでCUBEが1つに確定するので、1ファイルのまま面別に値を変えられる。
+//   キーは CANVAS_SIZES と同じ（LED_CUBE1/2/3）。指定しない項目は NAGARE_DEFAULTS のまま。
+//   フルスクリーン(size未指定)は既定値を使用。
+const NAGARE_PER_CUBE = {
+  LED_CUBE1: { density: 720 },
+  LED_CUBE2: { density: 1300 },
+  LED_CUBE3: { density: 1 },
+};
+// currentSize を見て nagareShared に上書きを適用（起動時に1回）
+function applyPerCubeOverrides() {
+  const o = NAGARE_PER_CUBE[currentSize];
+  if (o) Object.assign(nagareShared, o);
+}
 
 // ── 純粋ヘルパー（状態を持たない） ──
 function nagAngTo(from, to) {
@@ -581,20 +597,10 @@ function nagareFormatVal(name, v) {
 
 // スライダー共通ハンドラ
 function nagareUpdateParam(name, value) {
-  const isInt = name === "axis" || name === "loopSec" || name === "density";
+  const isInt = name === "axis" || name === "loopSec";
   nagareShared[name] = isInt ? parseInt(value) : parseFloat(value);
   const el = document.getElementById("n-" + name + "-val");
   if (el) el.textContent = nagareFormatVal(name, nagareShared[name]);
-
-  if (name === "density") {
-    // 各タイルの塊数を再計算してシーンを作り直す
-    for (const layer of graphicsLayers) {
-      const s = layer.graphics.width;
-      layer.shapes = Math.max(60, Math.round((nagareShared.density * s * s) / (760 * 1180)));
-      layer.buildScene();
-    }
-    nagareReplayIntro();
-  }
 }
 
 // 色（palette index 1..8 を UI の 0..7 で操作）
