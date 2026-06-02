@@ -54,6 +54,17 @@ function draw() {
   background(0, 20);
   drawDebugMode(); // デバッグ用LEDキューブのレイアウト参考画像の描画
 
+  // 時間経過で scale を線形に大きくする（実時間で毎秒 +0.01、上限0.6）
+  // deltaTime=前フレームからの経過ms。毎フレーム少しずつ足して滑らかに変化させる
+  if (nagareShared.scale < 0.6) {
+    nagareShared.scale = Math.min(0.6, nagareShared.scale + 0.01 * (deltaTime / 1000));
+    // GUIのスライダー / 表示も同期
+    const inp = document.getElementById("n-scale");
+    if (inp) inp.value = nagareShared.scale;
+    const lab = document.getElementById("n-scale-val");
+    if (lab) lab.textContent = nagareShared.scale.toFixed(2);
+  }
+
   if (graphicsLayers.length > 0) {
     // レイヤーの計算・描画処理を実行
     for (let i = 0; i < graphicsLayers.length; i++) {
