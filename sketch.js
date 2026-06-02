@@ -136,7 +136,56 @@ function draw() {
   }
 }
 
-// 個別Graphics管理クラス
+// ════════════════════════════════════════════════════════════════════════
+//  ながれ — Nagare （nagare_1.html からテンプレートへ移植）
+//  ふくらんだ玉と尾を引く塊が一本の軸に沿って群れ、ゆっくり攪拌される。
+//  クリーム地に太い輪郭とフラットな極彩色。各 GraphicsLayer（LEDキューブの
+//  各面のオフスクリーンバッファ）が、それぞれ独立した「ながれ」を描く。
+//  サイズ・座標は 760px 幅基準で調整されているため、正方形バッファに合わせて
+//  一律スケール（NAGARE_REF_W 基準）して歪みなく収める。
+// ════════════════════════════════════════════════════════════════════════
+const NAGARE_REF_W = 760; // 元のサイズ調整の基準幅（これに対してバッファをスケール）
+const NAGARE_BASE_SEED = 7; // 基準シード（レイヤーごとにずらす）
+const NAGARE_CREAM = [245, 241, 230];
+const NAGARE_OUTLINE = [58, 52, 44];
+
+// ── 全タイル共通のパラメータ（仮UIから操作する） ──
+const NAGARE_DEFAULTS = {
+  axis: -4, // 流れの傾き（上向き基準, deg）
+  loopSec: 40, // 1周の長さ（秒）
+  spread: 1.2, // 流れの幅（川幅）
+  scale: 0.32, // 塊の大きさ
+  variation: 0.5, // 大小のばらつき幅
+  introSec: 2.5, // 0から現れるまでの時間（秒）
+  density: 600, // 760×1180 相当での塊の数。面積比でタイルごとに換算
+  // 0->空(3)のミラー, 1若葉, 2陽だまり, 3空, 4朝顔, 5建物(白), 6生成り, 7若苗, 8ロゴ
+  palette: ["#5fc6e8", "#5bbf6a", "#ffd24c", "#5fc6e8", "#b89cf0", "#ffffff", "#fbf3df", "#8fe3b0", "#d44447"],
+  // 8色（palette index 1..8）の出やすさ
+  weights: [2, 2, 2.5, 0.5, 2.5, 1, 2, 1],
+};
+// 現在値（全レイヤーが共有して参照）
+let nagareShared = JSON.parse(JSON.stringify(NAGARE_DEFAULTS));
+
+// ── 純粋ヘルパー（状態を持たない） ──
+function nagAngTo(from, to) {
+  let d = to - from;
+  while (d > Math.PI) d -= TWO_PI;
+  while (d < -Math.PI) d += TWO_PI;
+  return d;
+}
+// 少しオーバーシュートするポップイン
+function nagEaseOutBack(t) {
+  if (t <= 0) return 0;
+  const c1 = 1.70158,
+    c3 = c1 + 1;
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+}
+function nagSmoothstep(t) {
+  t = Math.max(0, Math.min(1, t));
+  return t * t * (3 - 2 * t);
+}
+
+// 個別Graphics管理クラス（各面に「ながれ」を描画）
 class GraphicsLayer {
   constructor(size, index, shape) {
     //クラスの変更しないほうがいいプロパティ
@@ -145,114 +194,302 @@ class GraphicsLayer {
     this.shape = shape;
     this.isActive = false;
 
-    // 個別の変数や配列の初期化（サンプル用）
-    this.balls = [];
-    this.ballCount = random(5, 20);
-    this.color = color(random(255), random(255), random(255));
-    // ボールを初期化（サンプル用）
-    this.initBalls();
+    // ── nagare のパラメータ（全タイル共通の nagareShared を参照） ──
+    this.params = nagareShared;
+    // 760px 基準のサイズ調整を正方形バッファへ一律スケール
+    this.sizeScale = size / NAGARE_REF_W;
+    // 塊の数は面積比で換算（密度を一定に保つ）
+    this.shapes = Math.max(
+      60,
+      Math.round((nagareShared.density * size * size) / (760 * 1180))
+    );
+
+    this.effScale = 1;
+    this.items = [];
+    this.dots = [];
+    this.introStart = frameCount; // 生成時から intro を再生
+    this.buildScene();
   }
 
-  // ボールを初期化（サンプル用）
-  initBalls() {
-    this.balls = [];
-    // Graphicsサイズに応じてボールサイズを調整（1/10から1/20の範囲）
-    let minSize = this.graphics.width / 20;
-    let maxSize = this.graphics.width / 10;
+  // ── パレット / 重み付き抽選 ──
+  paletteColor(idx) {
+    if (idx === 0) idx = 3;
+    return color(this.params.palette[idx]);
+  }
+  weightedIndex() {
+    const w = this.params.weights;
+    let total = 0;
+    for (let i = 0; i < w.length; i++) total += w[i];
+    if (total <= 0) return 1;
+    let r = random(total);
+    for (let i = 0; i < w.length; i++) {
+      if (r < w[i]) return i + 1; // palette index 1..8
+      r -= w[i];
+    }
+    return 1;
+  }
 
-    for (let i = 0; i < this.ballCount; i++) {
-      this.balls.push({
-        x: random(minSize, this.graphics.width - minSize),
-        y: random(minSize, this.graphics.height - minSize),
-        vx: random(5) * (random() > 0.5 ? -1 : 1),
-        vy: random(5) * (random() > 0.5 ? -1 : 1),
-        size: random(minSize, maxSize),
-        color: color(random(255), random(255), random(255)),
+  // ── 固定構図を組み立てる（レイヤーごとに seed をずらす） ──
+  buildScene() {
+    randomSeed(NAGARE_BASE_SEED + this.index * 101);
+    noiseSeed(NAGARE_BASE_SEED + this.index * 101);
+    this.items = [];
+
+    for (let i = 0; i < this.shapes; i++) {
+      const isOrb = random() < 0.4;
+      let colIdx = this.weightedIndex();
+      const stream = {
+        p0: random(), // 流れに沿った位置
+        laneN: random(-1, 1), // 川幅方向のレーン(-1..1)
+        swayPh: random(TWO_PI),
+        swayAmp: random(8, 30),
+        orbPh: random(TWO_PI),
+        ph: random(1000),
+        sz: random(-1, 1), // 正規化サイズ係数（Variationで増幅）
+        colIdx,
+      };
+
+      if (isOrb) {
+        this.items.push(Object.assign(stream, { orb: true, rC: 57, aspect: random(0.82, 1.18) }));
+      } else {
+        const leaf = random() < 0.18;
+        if (leaf) stream.colIdx = random() < 0.5 ? 1 : 7; // 緑系（若葉 / 若苗）
+        const profile = leaf ? 1 : [0, 0, 1, 2][Math.floor(random(4))];
+        this.items.push(
+          Object.assign(stream, {
+            orb: false,
+            leaf: leaf,
+            angOff: random(-0.4, 0.4),
+            lenC: leaf ? 105 : 142, // サイズ中心値（Variationで広がる）
+            widC: leaf ? 62 : 65,
+            curlF: random(-0.42, 0.42),
+            profile: profile,
+          })
+        );
+      }
+    }
+
+    // 上に乗る粒（種）。同じ流れに乗る
+    this.dots = [];
+    const dn = Math.floor(this.shapes * 0.18);
+    for (let i = 0; i < dn; i++) {
+      this.dots.push({
+        rC: 7.5,
+        sz: random(-1, 1),
+        p0: random(),
+        laneN: random(-1, 1),
+        swayPh: random(TWO_PI),
+        swayAmp: random(6, 22),
+        colIdx: this.weightedIndex(),
       });
     }
   }
-  // このレイヤーの計算処理
-  update() {
-    let g = this.graphics;
-    for (let i = 0; i < this.balls.length; i++) {
-      let ball = this.balls[i];
-      // ボールの位置を更新
-      ball.x += ball.vx;
-      ball.y += ball.vy;
 
-      // 壁との衝突判定（跳ね返り）
-      if (ball.x - ball.size / 2 <= 0 || ball.x + ball.size / 2 >= g.width) {
-        ball.vx *= -1; // 水平方向の速度を反転
-        // 画面内に収める
-        ball.x = constrain(ball.x, ball.size / 2, g.width - ball.size / 2);
+  sizeFactor(s) {
+    return Math.max(0.1, 1 + this.params.variation * s.sz);
+  }
+
+  // 流れに沿ったサイズ包絡：下端で誕生(0)→中央で最大→上端で0
+  scaleEnv(p) {
+    const fin = 0.13,
+      fout = 0.18;
+    if (p < fin) return nagEaseOutBack(p / fin);
+    if (p > 1 - fout) return nagSmoothstep((1 - p) / fout);
+    return 1;
+  }
+
+  // ── リボン（玉＋尾）の輪郭をフレームごとに評価 ──
+  ribbonOutline(s, theta, baseX, baseY, sf) {
+    const a = radians(-90 + this.params.axis) + s.angOff; // 流れの上向き(+傾き)
+    const dir = { x: Math.cos(a), y: Math.sin(a) };
+    const perp = { x: -Math.sin(a), y: Math.cos(a) };
+    const bx = baseX,
+      by = baseY;
+    const L = s.lenC * this.sizeFactor(s) * this.effScale * sf;
+    const maxW = s.widC * this.sizeFactor(s) * this.effScale * sf;
+    const ph = s.orbPh;
+    const curl = s.curlF * (0.18 + 0.18 * Math.sin(theta + ph)); // ゆるい弓なり
+    const swayAmp = maxW * 0.16;
+    const N = 22;
+
+    const pts = [];
+    for (let j = 0; j <= N; j++) {
+      const u = j / N;
+      let px = bx + dir.x * (u * L) + perp.x * (curl * L * Math.sin(u * Math.PI));
+      let py = by + dir.y * (u * L) + perp.y * (curl * L * Math.sin(u * Math.PI));
+      // 中央のゆらぎ（両端0）→折れない
+      const wob = Math.sin(theta + ph + u * Math.PI * 0.7) * Math.sin(u * Math.PI) * swayAmp;
+      px += perp.x * wob;
+      py += perp.y * wob;
+      pts.push({ x: px, y: py });
+    }
+
+    // 幅プロファイル（頭は u=0）
+    const w = [];
+    for (let j = 0; j <= N; j++) {
+      const u = j / N;
+      let ww;
+      if (s.profile === 0) ww = maxW * Math.pow(Math.max(0, 1 - u), 0.48); // ふっくらした勾玉
+      else if (s.profile === 1) ww = maxW * Math.pow(Math.sin(u * Math.PI), 0.7); // 葉/レンズ
+      else ww = maxW * (0.5 + 0.5 * Math.cos(u * Math.PI)); // 棍棒
+      w.push(ww + 4.0);
+    }
+
+    // 法線
+    const nor = [];
+    for (let j = 0; j <= N; j++) {
+      let ax, ay;
+      if (j === 0) {
+        ax = pts[1].x - pts[0].x;
+        ay = pts[1].y - pts[0].y;
+      } else if (j === N) {
+        ax = pts[N].x - pts[N - 1].x;
+        ay = pts[N].y - pts[N - 1].y;
+      } else {
+        ax = pts[j + 1].x - pts[j - 1].x;
+        ay = pts[j + 1].y - pts[j - 1].y;
       }
+      const len = Math.hypot(ax, ay) || 1;
+      nor.push({ x: -ay / len, y: ax / len });
+    }
 
-      if (ball.y - ball.size / 2 <= 0 || ball.y + ball.size / 2 >= g.height) {
-        ball.vy *= -1; // 垂直方向の速度を反転
-        // 画面内に収める
-        ball.y = constrain(ball.y, ball.size / 2, g.height - ball.size / 2);
-      }
+    const left = [],
+      right = [];
+    for (let j = 0; j <= N; j++) {
+      left.push({ x: pts[j].x + (nor[j].x * w[j]) / 2, y: pts[j].y + (nor[j].y * w[j]) / 2 });
+      right.push({ x: pts[j].x - (nor[j].x * w[j]) / 2, y: pts[j].y - (nor[j].y * w[j]) / 2 });
+    }
 
-      // ボール同士の衝突判定
-      for (let j = i + 1; j < this.balls.length; j++) {
-        let otherBall = this.balls[j];
-        let dx = otherBall.x - ball.x;
-        let dy = otherBall.y - ball.y;
-        let distance = sqrt(dx * dx + dy * dy);
-        let minDistance = ball.size / 2 + otherBall.size / 2;
+    const out = [];
+    for (let j = 0; j <= N; j++) out.push(left[j]); // 頭→尾（左）
 
-        if (distance < minDistance) {
-          // 衝突時の処理
-          // 速度を交換（簡易的な物理演算）
-          let tempVx = ball.vx;
-          let tempVy = ball.vy;
-          ball.vx = otherBall.vx;
-          ball.vy = otherBall.vy;
-          otherBall.vx = tempVx;
-          otherBall.vy = tempVy;
-
-          // 重なりを解消
-          let overlap = minDistance - distance;
-          let angle = atan2(dy, dx);
-          let moveX = (cos(angle) * overlap) / 2;
-          let moveY = (sin(angle) * overlap) / 2;
-
-          ball.x -= moveX;
-          ball.y -= moveY;
-          otherBall.x += moveX;
-          otherBall.y += moveY;
+    // 尾の丸キャップ
+    {
+      const ct = pts[N],
+        rt = w[N] / 2;
+      if (rt > 1.5) {
+        const aL = Math.atan2(left[N].y - ct.y, left[N].x - ct.x);
+        const aR = Math.atan2(right[N].y - ct.y, right[N].x - ct.x);
+        const outer = Math.atan2(dir.y, dir.x);
+        const dFull = nagAngTo(aL, aR);
+        const dOut = nagAngTo(aL, outer);
+        let sweep = dFull;
+        if (Math.sign(dFull) !== Math.sign(dOut)) sweep = dFull > 0 ? dFull - TWO_PI : dFull + TWO_PI;
+        const M = 8;
+        for (let k = 1; k < M; k++) {
+          const ang = aL + sweep * (k / M);
+          out.push({ x: ct.x + Math.cos(ang) * rt, y: ct.y + Math.sin(ang) * rt });
         }
       }
     }
+
+    for (let j = N; j >= 0; j--) out.push(right[j]); // 尾→頭（右）
+
+    // 頭の丸い玉キャップ（index 0）
+    const c = pts[0],
+      r = w[0] / 2;
+    if (r > 1.5) {
+      const aR = Math.atan2(right[0].y - c.y, right[0].x - c.x);
+      const aL = Math.atan2(left[0].y - c.y, left[0].x - c.x);
+      const outerAng = Math.atan2(-dir.y, -dir.x);
+      const dFull = nagAngTo(aR, aL);
+      const dOut = nagAngTo(aR, outerAng);
+      let sweep = dFull;
+      if (Math.sign(dFull) !== Math.sign(dOut)) sweep = dFull > 0 ? dFull - TWO_PI : dFull + TWO_PI;
+      const M = 12;
+      for (let k = 1; k < M; k++) {
+        const ang = aR + sweep * (k / M);
+        out.push({ x: c.x + Math.cos(ang) * r, y: c.y + Math.sin(ang) * r });
+      }
+    }
+    return { out, pts };
   }
+
+  // このレイヤーの計算処理（幾何はdraw内でフレーム毎に評価）
+  update() {}
 
   // このレイヤーの描画処理
   draw() {
-    let g = this.graphics;
-    // 背景をクリア
-    g.background(0, 20);
-    // 個別の描画処理
-    this.drawBalls(g);
-  }
+    const g = this.graphics;
+    const W = g.width,
+      H = g.height;
+    const p = this.params;
 
-  // ボールの描画と物理演算
-  drawBalls(g) {
-    g.push();
-    g.noStroke();
+    g.background(NAGARE_CREAM[0], NAGARE_CREAM[1], NAGARE_CREAM[2]);
+    const loopFrames = Math.max(1, Math.round(p.loopSec * 60));
+    const loopPhase = (frameCount % loopFrames) / loopFrames; // 0..1
+    const theta = TWO_PI * loopPhase;
+    this.effScale = p.scale * this.sizeScale * (1 + 0.03 * Math.sin(theta * 2)); // ゆるい呼吸
+    g.strokeJoin(ROUND);
+    g.strokeCap(ROUND);
 
-    for (let i = 0; i < this.balls.length; i++) {
-      let ball = this.balls[i];
+    const introFrames = Math.max(1, Math.round(p.introSec * 60));
+    const introScale = p.introSec <= 0 ? 1 : nagEaseOutBack(Math.min(1, (frameCount - this.introStart) / introFrames));
 
-      // ボールの描画
-      g.fill(ball.color);
-      g.ellipse(ball.x, ball.y, ball.size);
+    // 上方向の流れ（axisで傾く）
+    const fa = radians(-90 + p.axis);
+    const dir = { x: Math.cos(fa), y: Math.sin(fa) };
+    const perp = { x: -Math.sin(fa), y: Math.cos(fa) };
+    const cx = W * 0.5,
+      cy = H * 0.5;
+    const span = H * 0.86; // 移動帯（枠内に収める）
+    const bandHalf = W * 0.5 * p.spread; // 川幅
 
-      // ボールの影を描画
-      g.fill(0, 50);
-      g.ellipse(ball.x + 2, ball.y + 2, ball.size);
+    for (let i = 0; i < this.items.length; i++) {
+      const s = this.items[i];
+      const pp = (s.p0 + loopPhase) % 1;
+      const sf = this.scaleEnv(pp) * introScale; // サイズ係数（0=未誕生）
+      if (sf <= 0.01) continue;
+
+      const along = (pp - 0.5) * span;
+      const lane = s.laneN * bandHalf + Math.sin(theta + s.swayPh) * s.swayAmp;
+      const px = cx + dir.x * along + perp.x * lane;
+      const py = cy + dir.y * along + perp.y * lane;
+
+      const col = this.paletteColor(s.colIdx);
+      const f = this.sizeFactor(s);
+      const sizeR = (s.orb ? s.rC : s.widC * 0.5) * f * this.effScale * sf;
+      const ow = Math.max(0.4, sizeR * 0.12);
+      g.stroke(NAGARE_OUTLINE[0], NAGARE_OUTLINE[1], NAGARE_OUTLINE[2]);
+      g.strokeWeight(ow);
+      g.fill(red(col), green(col), blue(col));
+
+      if (s.orb) {
+        const rEff = s.rC * f * this.effScale * sf;
+        g.ellipse(px, py, rEff * 2 * s.aspect, rEff * 2);
+      } else {
+        const geom = this.ribbonOutline(s, theta, px, py, sf);
+        g.beginShape();
+        for (let k = 0; k < geom.out.length; k++) g.vertex(geom.out[k].x, geom.out[k].y);
+        g.endShape(CLOSE);
+        if (s.leaf && sf > 0.6) {
+          g.stroke(NAGARE_OUTLINE[0], NAGARE_OUTLINE[1], NAGARE_OUTLINE[2], 150);
+          g.strokeWeight(Math.max(0.35, sizeR * 0.08));
+          g.noFill();
+          g.beginShape();
+          for (let k = 0; k < geom.pts.length; k += 2) g.vertex(geom.pts[k].x, geom.pts[k].y);
+          g.endShape();
+        }
+      }
     }
 
-    g.pop();
+    // 同じ流れに乗る粒（種）
+    for (let i = 0; i < this.dots.length; i++) {
+      const d = this.dots[i];
+      const pp = (d.p0 + loopPhase) % 1;
+      const sf = this.scaleEnv(pp) * introScale;
+      if (sf <= 0.01) continue;
+      const along = (pp - 0.5) * span;
+      const lane = d.laneN * bandHalf + Math.sin(theta + d.swayPh) * d.swayAmp;
+      const px = cx + dir.x * along + perp.x * lane;
+      const py = cy + dir.y * along + perp.y * lane;
+      const col = this.paletteColor(d.colIdx);
+      const drawnR = d.rC * this.sizeFactor(d) * this.effScale * sf;
+      g.stroke(NAGARE_OUTLINE[0], NAGARE_OUTLINE[1], NAGARE_OUTLINE[2]);
+      g.strokeWeight(Math.max(0.4, drawnR * 0.12));
+      g.fill(red(col), green(col), blue(col));
+      g.circle(px, py, drawnR * 2);
+    }
   }
 
   // レイヤーを削除
@@ -315,6 +552,56 @@ function removeGraphicsLayers() {
   });
   graphicsLayers = [];
   currentLayerIndex = 0;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  仮UI: 全タイルへ nagare パラメータを反映（NEORTアップロード時はパネルごと削除可）
+// ════════════════════════════════════════════════════════════════════════
+function nagareFormatVal(name, v) {
+  if (name === "axis") return v + "°";
+  if (name === "loopSec" || name === "introSec") return v + "s";
+  if (name === "spread" || name === "variation") return Math.round(v * 100) + "%";
+  return v;
+}
+
+// スライダー共通ハンドラ
+function nagareUpdateParam(name, value) {
+  const isInt = name === "axis" || name === "loopSec" || name === "density";
+  nagareShared[name] = isInt ? parseInt(value) : parseFloat(value);
+  const el = document.getElementById("n-" + name + "-val");
+  if (el) el.textContent = nagareFormatVal(name, nagareShared[name]);
+
+  if (name === "density") {
+    // 各タイルの塊数を再計算してシーンを作り直す
+    for (const layer of graphicsLayers) {
+      const s = layer.graphics.width;
+      layer.shapes = Math.max(60, Math.round((nagareShared.density * s * s) / (760 * 1180)));
+      layer.buildScene();
+    }
+    nagareReplayIntro();
+  }
+}
+
+// 色（palette index 1..8 を UI の 0..7 で操作）
+function nagareUpdateColor(idx, value) {
+  nagareShared.palette[idx + 1] = value;
+  const el = document.getElementById("n-color" + idx + "-val");
+  if (el) el.textContent = value;
+}
+
+function nagareReplayIntro() {
+  for (const layer of graphicsLayers) layer.introStart = frameCount;
+}
+
+function nagareRegenerate() {
+  for (const layer of graphicsLayers) layer.buildScene();
+  nagareReplayIntro();
+}
+
+// パネルの開閉
+function nagareTogglePanel() {
+  const p = document.getElementById("nagare-panel");
+  if (p) p.classList.toggle("collapsed");
 }
 
 // ウィンドウリサイズ時の処理

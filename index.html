@@ -8,9 +8,177 @@
     <!--  タイトルを変更  -->
     <script src="https://cdn.jsdelivr.net/npm/p5@1.11.9/lib/p5.min.js"></script>
     <link rel="stylesheet" href="style.css" />
+
+    <!-- ▼▼ 仮UI（nagare調整パネル）。NEORTアップロード時はこの style と #nagare-panel を削除 ▼▼ -->
+    <style>
+      #nagare-panel {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        z-index: 9999;
+        width: 240px;
+        max-height: calc(100vh - 24px);
+        overflow-y: auto;
+        background: rgba(20, 20, 19, 0.82);
+        backdrop-filter: blur(8px);
+        color: #faf9f5;
+        font-family: -apple-system, "Segoe UI", sans-serif;
+        font-size: 12px;
+        border-radius: 10px;
+        padding: 12px 14px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+        user-select: none;
+      }
+      #nagare-panel.collapsed .np-body {
+        display: none;
+      }
+      #nagare-panel header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+      #nagare-panel header h2 {
+        margin: 0;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+      }
+      #nagare-panel .np-toggle {
+        cursor: pointer;
+        background: none;
+        border: none;
+        color: #b0aea5;
+        font-size: 16px;
+        line-height: 1;
+        padding: 0 4px;
+      }
+      #nagare-panel .np-row {
+        margin-bottom: 9px;
+      }
+      #nagare-panel label {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 3px;
+        color: #d8d6cd;
+      }
+      #nagare-panel .np-val {
+        color: #d97757;
+        font-family: "Courier New", monospace;
+      }
+      #nagare-panel input[type="range"] {
+        width: 100%;
+        height: 3px;
+        accent-color: #d97757;
+      }
+      #nagare-panel .np-buttons {
+        display: flex;
+        gap: 6px;
+        margin: 10px 0;
+      }
+      #nagare-panel button.np-btn {
+        flex: 1;
+        cursor: pointer;
+        border: none;
+        border-radius: 5px;
+        padding: 7px 4px;
+        font-size: 12px;
+        color: #fff;
+        background: #d97757;
+      }
+      #nagare-panel button.np-btn.alt {
+        background: #6a9bcc;
+      }
+      #nagare-panel .np-colors {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px 8px;
+        margin-top: 6px;
+      }
+      #nagare-panel .np-color {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      #nagare-panel .np-color input[type="color"] {
+        width: 24px;
+        height: 24px;
+        border: none;
+        border-radius: 4px;
+        background: none;
+        padding: 0;
+        cursor: pointer;
+      }
+      #nagare-panel .np-color span {
+        font-size: 11px;
+        color: #d8d6cd;
+      }
+      #nagare-panel .np-note {
+        margin-top: 10px;
+        font-size: 10px;
+        color: #8f8d84;
+        line-height: 1.5;
+      }
+    </style>
   </head>
 
   <body>
+    <!-- ▼▼ 仮UIパネル ▼▼ -->
+    <div id="nagare-panel">
+      <header>
+        <h2>ながれ — 調整(仮)</h2>
+        <button class="np-toggle" onclick="nagareTogglePanel()" title="開閉">▾</button>
+      </header>
+      <div class="np-body">
+        <div class="np-row">
+          <label>Axis（傾き）<span class="np-val" id="n-axis-val">-4°</span></label>
+          <input type="range" min="-90" max="90" step="1" value="-4" oninput="nagareUpdateParam('axis', this.value)" />
+        </div>
+        <div class="np-row">
+          <label>Loop（周期）<span class="np-val" id="n-loopSec-val">40s</span></label>
+          <input type="range" min="8" max="60" step="1" value="40" oninput="nagareUpdateParam('loopSec', this.value)" />
+        </div>
+        <div class="np-row">
+          <label>Spread（川幅）<span class="np-val" id="n-spread-val">120%</span></label>
+          <input type="range" min="0.3" max="1.2" step="0.05" value="1.2" oninput="nagareUpdateParam('spread', this.value)" />
+        </div>
+        <div class="np-row">
+          <label>Scale（大きさ）<span class="np-val" id="n-scale-val">0.32</span></label>
+          <input type="range" min="0.01" max="1.8" step="0.01" value="0.32" oninput="nagareUpdateParam('scale', this.value)" />
+        </div>
+        <div class="np-row">
+          <label>Variation（ばらつき）<span class="np-val" id="n-variation-val">50%</span></label>
+          <input type="range" min="0" max="1" step="0.05" value="0.5" oninput="nagareUpdateParam('variation', this.value)" />
+        </div>
+        <div class="np-row">
+          <label>Intro（出現秒）<span class="np-val" id="n-introSec-val">2.5s</span></label>
+          <input type="range" min="0" max="6" step="0.5" value="2.5" oninput="nagareUpdateParam('introSec', this.value)" />
+        </div>
+        <div class="np-row">
+          <label>Density（密度）<span class="np-val" id="n-density-val">600</span></label>
+          <input type="range" min="60" max="1500" step="20" value="600" oninput="nagareUpdateParam('density', this.value)" />
+        </div>
+
+        <div class="np-buttons">
+          <button class="np-btn" onclick="nagareRegenerate()">↻ Regenerate</button>
+          <button class="np-btn alt" onclick="nagareReplayIntro()">↻ Intro</button>
+        </div>
+
+        <div class="np-colors">
+          <div class="np-color"><input type="color" aria-label="若葉の色" value="#5bbf6a" oninput="nagareUpdateColor(0, this.value)" /><span>若葉</span></div>
+          <div class="np-color"><input type="color" aria-label="陽だまりの色" value="#ffd24c" oninput="nagareUpdateColor(1, this.value)" /><span>陽だまり</span></div>
+          <div class="np-color"><input type="color" aria-label="空の色" value="#5fc6e8" oninput="nagareUpdateColor(2, this.value)" /><span>空</span></div>
+          <div class="np-color"><input type="color" aria-label="朝顔の色" value="#b89cf0" oninput="nagareUpdateColor(3, this.value)" /><span>朝顔</span></div>
+          <div class="np-color"><input type="color" aria-label="建物の色" value="#ffffff" oninput="nagareUpdateColor(4, this.value)" /><span>建物</span></div>
+          <div class="np-color"><input type="color" aria-label="生成りの色" value="#fbf3df" oninput="nagareUpdateColor(5, this.value)" /><span>生成り</span></div>
+          <div class="np-color"><input type="color" aria-label="若苗の色" value="#8fe3b0" oninput="nagareUpdateColor(6, this.value)" /><span>若苗</span></div>
+          <div class="np-color"><input type="color" aria-label="ロゴの色" value="#d44447" oninput="nagareUpdateColor(7, this.value)" /><span>ロゴ</span></div>
+        </div>
+
+        <div class="np-note">※ 色・密度の変更は再構築されます。1〜4キーでLEDキューブ切替。本番(NEORT)時はこのパネルを削除してください。</div>
+      </div>
+    </div>
+
     <script src="sketch.js"></script>
     <!-- <script src="sketch_skelton.js"></script> -->
   </body>
