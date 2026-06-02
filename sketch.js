@@ -597,10 +597,20 @@ function nagareFormatVal(name, v) {
 
 // スライダー共通ハンドラ
 function nagareUpdateParam(name, value) {
-  const isInt = name === "axis" || name === "loopSec";
+  const isInt = name === "axis" || name === "loopSec" || name === "density";
   nagareShared[name] = isInt ? parseInt(value) : parseFloat(value);
   const el = document.getElementById("n-" + name + "-val");
   if (el) el.textContent = nagareFormatVal(name, nagareShared[name]);
+
+  if (name === "density") {
+    // 各タイルの塊数を再計算してシーンを作り直す
+    for (const layer of graphicsLayers) {
+      const s = layer.graphics.width;
+      layer.shapes = Math.max(60, Math.round((nagareShared.density * s * s) / (760 * 1180)));
+      layer.buildScene();
+    }
+    nagareReplayIntro();
+  }
 }
 
 // 色（palette index 1..8 を UI の 0..7 で操作）
