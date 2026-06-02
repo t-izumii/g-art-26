@@ -157,6 +157,8 @@ const NAGARE_DEFAULTS = {
   scale: 0.32, // 塊の大きさ
   variation: 0.5, // 大小のばらつき幅
   introSec: 2.5, // 0から現れるまでの時間（秒）
+  fadeIn: 0.13, // 下：出現の余白（流れの何割で0→フルになるか）
+  fadeOut: 0.18, // 上：消失の余白（流れの何割で フル→0 になるか）
   density: 600, // 760×1180 相当での塊の数。面積比でタイルごとに換算
   // 0->空(3)のミラー, 1若葉, 2陽だまり, 3空, 4朝顔, 5建物(白), 6生成り, 7若苗, 8ロゴ
   palette: ["#5fc6e8", "#5bbf6a", "#ffd24c", "#5fc6e8", "#b89cf0", "#ffffff", "#fbf3df", "#8fe3b0", "#d44447"],
@@ -271,10 +273,10 @@ class GraphicsLayer {
 
     // 上に乗る粒（種）。同じ流れに乗る
     this.dots = [];
-    const dn = Math.floor(this.shapes * 0.18);
+    const dn = 0; // 粒を一旦OFF（戻すときは Math.floor(this.shapes * 0.18) に）
     for (let i = 0; i < dn; i++) {
       this.dots.push({
-        rC: 7.5,
+        rC: 20, // 粒の基準サイズ（点に見えないよう拡大。玉=57）
         sz: random(-1, 1),
         p0: random(),
         laneN: random(-1, 1),
@@ -290,9 +292,10 @@ class GraphicsLayer {
   }
 
   // 流れに沿ったサイズ包絡：下端で誕生(0)→中央で最大→上端で0
+  //   fadeIn=下の余白, fadeOut=上の余白（GUIで可変）
   scaleEnv(p) {
-    const fin = 0.13,
-      fout = 0.18;
+    const fin = Math.max(0.001, this.params.fadeIn);
+    const fout = Math.max(0.001, this.params.fadeOut);
     if (p < fin) return nagEaseOutBack(p / fin);
     if (p > 1 - fout) return nagSmoothstep((1 - p) / fout);
     return 1;
@@ -560,7 +563,8 @@ function removeGraphicsLayers() {
 function nagareFormatVal(name, v) {
   if (name === "axis") return v + "°";
   if (name === "loopSec" || name === "introSec") return v + "s";
-  if (name === "spread" || name === "variation") return Math.round(v * 100) + "%";
+  if (name === "spread" || name === "variation" || name === "fadeIn" || name === "fadeOut")
+    return Math.round(v * 100) + "%";
   return v;
 }
 
