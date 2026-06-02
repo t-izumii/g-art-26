@@ -187,7 +187,7 @@ let nagareShared = JSON.parse(JSON.stringify(NAGARE_DEFAULTS));
 const NAGARE_PER_CUBE = {
   LED_CUBE1: { density: 720 },
   LED_CUBE2: { density: 1300 },
-  LED_CUBE3: { density: 1 },
+  LED_CUBE3: { density: 3000 },
 };
 // currentSize を見て nagareShared に上書きを適用（起動時に1回）
 function applyPerCubeOverrides() {
