@@ -148,7 +148,7 @@ function draw() {
 
 const NAGARE_REF_W = 760;
 const NAGARE_BASE_SEED = 7;
-const NAGARE_CREAM = [245, 241, 230];
+const NAGARE_CREAM = [243, 230, 195];
 const NAGARE_OUTLINE = [58, 52, 44];
 
 const NAGARE_DEFAULTS = {
