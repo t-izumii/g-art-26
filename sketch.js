@@ -55,14 +55,6 @@ function draw() {
   background(0, 20);
   drawDebugMode(); // デバッグ用LEDキューブのレイアウト参考画像の描画
 
-  if (nagareShared.scale < 0.6) {
-    nagareShared.scale = Math.min(0.6, nagareShared.scale + 0.01 * (deltaTime / 1000));
-    const inp = document.getElementById("n-scale");
-    if (inp) inp.value = nagareShared.scale;
-    const lab = document.getElementById("n-scale-val");
-    if (lab) lab.textContent = nagareShared.scale.toFixed(2);
-  }
-
   if (graphicsLayers.length > 0) {
     // レイヤーの計算・描画処理を実行
     for (let i = 0; i < graphicsLayers.length; i++) {
@@ -155,7 +147,7 @@ const NAGARE_DEFAULTS = {
   axis: -4,
   loopSec: 40,
   spread: 1.2,
-  scale: 0.17,
+  scale: 0.4,
   variation: 0.5,
   introSec: 2.5,
   fadeIn: 0.13,
@@ -167,9 +159,9 @@ const NAGARE_DEFAULTS = {
 let nagareShared = JSON.parse(JSON.stringify(NAGARE_DEFAULTS));
 
 const NAGARE_PER_CUBE = {
-  LED_CUBE1: { density: 720 },
-  LED_CUBE2: { density: 1300 },
-  LED_CUBE3: { density: 3000 },
+  LED_CUBE1: { density: 720, scale: 0.5 },
+  LED_CUBE2: { density: 1600, scale: 0.6 },
+  LED_CUBE3: { density: 2000, scale: 0.6 },
 };
 function applyPerCubeOverrides() {
   const o = NAGARE_PER_CUBE[currentSize];
@@ -290,10 +282,7 @@ class GraphicsLayer {
   }
 
   scaleEnv(p) {
-    const fin = Math.max(0.001, this.params.fadeIn);
-    const fout = Math.max(0.001, this.params.fadeOut);
-    if (p < fin) return nagEaseOutBack(p / fin);
-    if (p > 1 - fout) return nagSmoothstep((1 - p) / fout);
+    // 端で縮小せず、常にフルサイズ。折り返しは画面外(span > H)で行うため見切れて流れる
     return 1;
   }
 
@@ -415,20 +404,22 @@ class GraphicsLayer {
     g.strokeCap(ROUND);
 
     const introFrames = Math.max(1, Math.round(p.introSec * 60));
-    const introScale = p.introSec <= 0 ? 1 : nagEaseOutBack(Math.min(1, (frameCount - this.introStart) / introFrames));
+    const introScale = p.introSec <= 0 ? 1 : nagSmoothstep(Math.min(1, (frameCount - this.introStart) / introFrames));
 
     const fa = radians(-90 + p.axis);
     const dir = { x: Math.cos(fa), y: Math.sin(fa) };
     const perp = { x: -Math.sin(fa), y: Math.cos(fa) };
     const cx = W * 0.5,
       cy = H * 0.5;
-    const span = H * 0.86;
+    const span = H * 1.6;
     const bandHalf = W * 0.5 * p.spread;
 
     for (let i = 0; i < this.items.length; i++) {
       const s = this.items[i];
       const pp = (s.p0 + loopPhase) % 1;
-      const sf = this.scaleEnv(pp) * introScale;
+      // 個体ごとに位相をずらした sin で、表示後にサイズを少しだけ拡縮させる
+      const pulse = 1 + 0.05 * Math.sin(frameCount * 0.03 + s.orbPh);
+      const sf = this.scaleEnv(pp) * introScale * pulse;
       if (sf <= 0.01) continue;
 
       const along = (pp - 0.5) * span;
@@ -466,7 +457,9 @@ class GraphicsLayer {
     for (let i = 0; i < this.dots.length; i++) {
       const d = this.dots[i];
       const pp = (d.p0 + loopPhase) % 1;
-      const sf = this.scaleEnv(pp) * introScale;
+      // 個体ごとに位相をずらした sin で、表示後にサイズを少しだけ拡縮させる
+      const pulse = 1 + 0.05 * Math.sin(frameCount * 0.03 + d.swayPh);
+      const sf = this.scaleEnv(pp) * introScale * pulse;
       if (sf <= 0.01) continue;
       const along = (pp - 0.5) * span;
       const lane = d.laneN * bandHalf + Math.sin(theta + d.swayPh) * d.swayAmp;
